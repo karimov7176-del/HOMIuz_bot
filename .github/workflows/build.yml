@@ -6,7 +6,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -14,7 +13,6 @@ jobs:
       - name: Create bot files
         run: |
           mkdir -p src
-
           echo '{"name":"HOMIuz_bot","version":"1.0.0","main":"src/index.js","type":"module","scripts":{"start":"node src/index.js"}}' > package.json
 
           echo 'import { Telegraf } from "telegraf";
@@ -25,8 +23,8 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const redis = new Redis(process.env.REDIS_URL);
 
-const groupId = -1003184540605; // ID твоей группы
-const reopenDelay = 15; // минут
+const groupId = -1003184540605;
+const reopenDelay = 15;
 
 bot.start((ctx) => ctx.reply("Привет! Я HOMIuz бот, создавай заявки через /new"));
 
