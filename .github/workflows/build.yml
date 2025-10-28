@@ -1,0 +1,111 @@
+name: Build HOMIuz Bot
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create bot files
+        run: |
+          mkdir -p src
+
+          echo '{"name":"HOMIuz_bot","version":"1.0.0","main":"src/index.js","type":"module","scripts":{"start":"node src/index.js"}}' > package.json
+
+          echo 'import { Telegraf } from "telegraf";
+import { Pool } from "pg";
+import Redis from "ioredis";
+
+const bot = new Telegraf(process.env.BOT_TOKEN);
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const redis = new Redis(process.env.REDIS_URL);
+
+const groupId = -1003184540605; // ID твоей группы
+const reopenDelay = 15; // минут
+
+bot.start((ctx) => ctx.reply("Привет! Я HOMIuz бот, создавай заявки через /new"));
+
+bot.command("new", async (ctx) => {
+  const args = ctx.message.text.split(" ").slice(1).join(" ");
+  const [cat, desc, loc, phone, price] = args.split("|").map(a => a.trim());
+  if (!cat || !desc) return ctx.reply("Формат: /new категория|описание|локация|телефон|цена");
+  const q = await pool.query(
+    "INSERT INTO requests(category,description,location,phone,price,status,chat_id,client_user_id,group_chat_id,created_at) VALUES($1,$2,$3,$4,$5,'open',$6,$7,$8,now()) RETURNING id",
+    [cat, desc, loc, phone, Number(price)||0, ctx.chat.id, ctx.from.id, groupId]
+  );
+  const id = q.rows[0].id;
+  const text = `🆕 Заявка #${id}\nКатегория: ${cat}\nОписание: ${desc}\nЛокация: ${loc}\nТелефон: ${phone}\nЦена: ${price}`;
+  const msg = await bot.telegram.sendMessage(groupId, text, {
+    reply_markup: { inline_keyboard: [[{ text: "Откликнуться", callback_data: "respond:" + id }]] }
+  });
+  await pool.query("UPDATE requests SET group_message_id=$1 WHERE id=$2", [msg.message_id, id]);
+  ctx.reply("Заявка опубликована в группе!");
+});
+
+bot.on("callback_query", async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  if (!data.startsWith("respond:")) return;
+  const id = Number(data.split(":")[1]);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const r = await client.query("SELECT * FROM requests WHERE id=$1 FOR UPDATE", [id]);
+    const req = r.rows[0];
+    if (!req || req.status !== "open") {
+      await client.query("ROLLBACK");
+      return ctx.answerCbQuery("Уже занято!");
+    }
+    await client.query("UPDATE requests SET status='taken', taken_by=$1, taken_at=now() WHERE id=$2", [ctx.from.id, id]);
+    await client.query("COMMIT");
+    await bot.telegram.editMessageReplyMarkup(req.group_chat_id, req.group_message_id, undefined, { inline_keyboard: [] });
+    await bot.telegram.sendMessage(req.chat_id, `🔧 Мастер ${ctx.from.first_name} откликнулся на заявку #${id}`);
+    ctx.answerCbQuery("Вы откликнулись!");
+    setTimeout(async () => {
+      const q = await pool.query("SELECT * FROM requests WHERE id=$1", [id]);
+      if (q.rows[0].status === "taken") {
+        await pool.query("UPDATE requests SET status='open', taken_by=NULL WHERE id=$1", [id]);
+        await bot.telegram.editMessageReplyMarkup(req.group_chat_id, req.group_message_id, undefined, {
+          inline_keyboard: [[{ text: "Откликнуться", callback_data: "respond:" + id }]]
+        });
+      }
+    }, reopenDelay * 60 * 1000);
+  } catch (e) {
+    await client.query("ROLLBACK");
+    ctx.answerCbQuery("Ошибка!");
+  } finally {
+    client.release();
+  }
+});
+
+bot.launch();
+console.log("Bot started");' > src/index.js
+
+          echo 'CREATE TABLE IF NOT EXISTS requests (
+            id SERIAL PRIMARY KEY,
+            category TEXT,
+            description TEXT,
+            location TEXT,
+            phone TEXT,
+            price INTEGER,
+            status TEXT,
+            chat_id BIGINT,
+            client_user_id BIGINT,
+            group_chat_id BIGINT,
+            group_message_id INTEGER,
+            taken_by BIGINT,
+            created_at TIMESTAMPTZ,
+            taken_at TIMESTAMPTZ
+          );' > src/init.sql
+
+      - name: Commit bot files
+        run: |
+          git config user.name "HOMIuzBot"
+          git config user.email "bot@homiuz"
+          git add .
+          git commit -m "Добавлен код бота HOMIuz"
+          git push
